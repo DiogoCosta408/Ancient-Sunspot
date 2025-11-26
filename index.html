@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Solar System Gravity Simulation</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="ui-container">
+        <div id="controls">
+            <h1>Solar System Gravity</h1>
+            <div class="control-group">
+                <label for="camera-target">Camera Target:</label>
+                <select id="camera-target">
+                    <option value="Free">Free Camera</option>
+                    <option value="Sun">Sun</option>
+                    <!-- Planets will be added dynamically -->
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Spawn Body Parameters:</label>
+                <div class="spawn-controls">
+                    <label for="spawn-mass" style="font-size: 0.8rem; margin-bottom: 0;">Mass:</label>
+                    <input type="number" id="spawn-mass" placeholder="Mass" value="10">
+
+                    <label for="spawn-velocity" style="font-size: 0.8rem; margin-bottom: 0;">Velocity
+                        Multiplier:</label>
+                    <input type="number" id="spawn-velocity" placeholder="Velocity" value="5">
+
+                    <button id="spawn-btn">Spawn (Click & Drag)</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <label style="cursor: pointer;"
+                    onclick="document.getElementById('pilot-controls').style.display = document.getElementById('pilot-controls').style.display === 'none' ? 'block' : 'none'">Pilot
+                    Mode ▼</label>
+                <div id="pilot-controls" style="display: none;">
+                    <label for="max-thrust" style="font-size: 0.8rem; margin-bottom: 0;">Max Thrust:</label>
+                    <input type="range" id="max-thrust" min="0.1" max="10" step="0.1" value="2">
+                    <span id="max-thrust-val">2.0</span>
+                    <button id="pilot-mode-btn" style="margin-top: 10px;">Launch Pilot Mode</button>
+                    <div id="pilot-instructions"
+                        style="display: none; font-size: 0.8rem; margin-top: 5px; color: #aaa;">
+                        W/S: Thrust | Mouse: Steer | ESC: Exit
+                    </div>
+                </div>
+            </div>
+            <div class="control-group">
+                <label for="time-scale">Time Scale:</label>
+                <input type="range" id="time-scale" min="0" max="100" value="1">
+                <span id="time-scale-val">1x</span>
+            </div>
+            <div class="control-group">
+                <label>Options:</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="show-orbits" style="width: auto;">
+                    <label for="show-orbits" style="margin: 0; cursor: pointer;">Show Orbit Lines</label>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
+                    <input type="checkbox" id="show-names" style="width: auto;">
+                    <label for="show-names" style="margin: 0; cursor: pointer;">Show Names</label>
+                </div>
+                <button id="reset-camera-btn" style="margin-top: 10px;">Reset Camera</button>
+                <button id="reset-simulation-btn" style="margin-top: 5px;">Reset Simulation</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pilot Mode HUD -->
+    <div id="pilot-hud"
+        style="display: none; position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.7); padding: 20px; border-radius: 10px; color: #0f0; font-family: 'Courier New', monospace; border: 2px solid #0f0;">
+        <div style="display: flex; gap: 30px; align-items: center;">
+            <div>
+                <div style="font-size: 0.8rem; margin-bottom: 5px;">THRUST</div>
+                <div style="width: 200px; height: 20px; background: #111; border: 1px solid #0f0; position: relative;">
+                    <div id="thrust-bar"
+                        style="height: 100%; background: linear-gradient(90deg, #0f0, #0a0); width: 0%; transition: width 0.1s;">
+                    </div>
+                </div>
+                <div id="thrust-val" style="font-size: 1.2rem; margin-top: 5px; text-align: center;">0.0</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8rem; margin-bottom: 5px;">SPEED</div>
+                <div id="speed-display" style="font-size: 2rem; color: #0ff; text-align: center;">0 km/h</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crosshair -->
+    <div id="crosshair"
+        style="display: none; position: fixed; top: 50%; left: 50%; width: 20px; height: 20px; transform: translate(-50%, -50%); pointer-events: none; z-index: 1000;">
+        <div
+            style="position: absolute; top: 9px; left: 0; width: 20px; height: 2px; background: #0f0; box-shadow: 0 0 4px #0f0;">
+        </div>
+        <div
+            style="position: absolute; top: 0; left: 9px; width: 2px; height: 20px; background: #0f0; box-shadow: 0 0 4px #0f0;">
+        </div>
+    </div>
+
+    <canvas id="bg"></canvas>
+    <script type="module" src="main.js"></script>
+</body>
+
+</html>
