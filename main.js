@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // --- Configuration ---
 const CONFIG = {
     G: 0.1, // Gravitational constant (visual scale)
-    dt: 0.005, // Time step (20x slower than 0.1)
+    dt: 0.003, // Time step (smaller for more stable orbits)
     softening: 0.1 // To prevent singularities
 };
 
@@ -27,17 +27,30 @@ const renderer = new THREE.WebGLRenderer({
     antialias: true
 });
 
+// Enable shadow mapping for dynamic shadows
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Soft shadows
+
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 camera.position.setZ(50);
 camera.position.setY(20);
 
 // --- Lighting ---
-const ambientLight = new THREE.AmbientLight(0x333333);
+// Balanced ambient light to show both lit and dark sides
+const ambientLight = new THREE.AmbientLight(0x444444, 0.4);
 scene.add(ambientLight);
 
-const pointLight = new THREE.PointLight(0xffffff, 2, 1000);
+const pointLight = new THREE.PointLight(0xffffff, 5, 1000); // Strong directional light from sun
 pointLight.position.set(0, 0, 0); // Sun is at center
+
+// Enable shadows for the sun's light
+pointLight.castShadow = true;
+pointLight.shadow.mapSize.width = 2048;
+pointLight.shadow.mapSize.height = 2048;
+pointLight.shadow.camera.near = 0.5;
+pointLight.shadow.camera.far = 500;
+
 scene.add(pointLight);
 
 // --- Controls ---
@@ -65,6 +78,13 @@ class Body {
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
         this.mesh.userData = { body: this }; // Link mesh back to body for raycasting
+
+        // Enable shadows for planets (not for stars)
+        if (!isStar) {
+            this.mesh.castShadow = true;
+            this.mesh.receiveShadow = true;
+        }
+
         scene.add(this.mesh);
 
         // Trail
@@ -268,15 +288,36 @@ function createStarfield() {
 
 createStarfield();
 
-// Sun Glow
-const sunGlowGeo = new THREE.SpriteMaterial({
-    map: new THREE.TextureLoader().load('https://threejs.org/examples/textures/sprites/glow.png'),
-    color: 0xffff00,
-    transparent: true,
-    blending: THREE.AdditiveBlending
+// Soft gradient glow around the sun using ShaderMaterial
+const sunGlowGeometry = new THREE.SphereGeometry(15, 32, 32); // Large sphere around sun
+const sunGlowMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        glowColor: { value: new THREE.Color(0xffff00) },
+        viewVector: { value: camera.position }
+    },
+    vertexShader: `
+        uniform vec3 viewVector;
+        varying float intensity;
+        void main() {
+            vec3 vNormal = normalize(normalMatrix * normal);
+            vec3 vNormel = normalize(normalMatrix * viewVector);
+            intensity = pow(0.7 - dot(vNormal, vNormel), 4.0);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform vec3 glowColor;
+        varying float intensity;
+        void main() {
+            vec3 glow = glowColor * intensity;
+            gl_FragColor = vec4(glow, intensity);
+        }
+    `,
+    side: THREE.BackSide,
+    blending: THREE.AdditiveBlending,
+    transparent: true
 });
-const sunGlow = new THREE.Sprite(sunGlowGeo);
-sunGlow.scale.set(25, 25, 1);
+const sunGlow = new THREE.Mesh(sunGlowGeometry, sunGlowMaterial);
 scene.add(sunGlow);
 
 // --- Solar System Data ---
@@ -287,33 +328,72 @@ function initSolarSystem() {
     const sun = new Body("Sun", 10000, 5, 0xffff00, [0, 0, 0], [0, 0, 0], true);
     state.bodies.push(sun);
 
-    // Planets (Name, Mass, Radius, Color, Distance, Velocity)
-    // Velocity calculated for circular orbit: v = sqrt(G * M_sun / r)
-    // v = sqrt(0.1 * 10000 / r) = sqrt(1000 / r)
+    // Planets with elliptical orbit parameters
+    // semiMajorAxis: average orbital distance (visual scale)
+    // eccentricity: orbital eccentricity (0 = circle, 0-1 = ellipse)
+    // period: orbital period in Earth years (real data)
+    // All  planets start at perihelion (closest point to sun) for simplified initialization
     const planets = [
-        { name: "Mercury", mass: 1, radius: 0.8, color: 0xaaaaaa, distance: 10 },
-        { name: "Venus", mass: 2, radius: 1.2, color: 0xffcc00, distance: 15 },
-        { name: "Earth", mass: 2, radius: 1.3, color: 0x0000ff, distance: 20 },
-        { name: "Mars", mass: 1.5, radius: 1.0, color: 0xff0000, distance: 25 },
-        { name: "Jupiter", mass: 50, radius: 3.5, color: 0xffaa00, distance: 40 },
-        { name: "Saturn", mass: 40, radius: 3.0, color: 0xddcc99, distance: 55 },
-        { name: "Uranus", mass: 20, radius: 2.0, color: 0x00ffff, distance: 70 },
-        { name: "Neptune", mass: 20, radius: 2.0, color: 0x0000aa, distance: 85 },
+        {
+            name: "Mercury", mass: 1, radius: 0.8, color: 0xaaaaaa,
+            semiMajorAxis: 25, eccentricity: 0.206, period: 0.24
+        },
+        {
+            name: "Venus", mass: 2, radius: 1.2, color: 0xffcc00,
+            semiMajorAxis: 35, eccentricity: 0.007, period: 0.62
+        },
+        {
+            name: "Earth", mass: 2, radius: 1.3, color: 0x0000ff,
+            semiMajorAxis: 45, eccentricity: 0.017, period: 1.0
+        },
+        {
+            name: "Mars", mass: 1.5, radius: 1.0, color: 0xff0000,
+            semiMajorAxis: 55, eccentricity: 0.093, period: 1.88
+        },
+        {
+            name: "Jupiter", mass: 50, radius: 3.5, color: 0xffaa00,
+            semiMajorAxis: 80, eccentricity: 0.048, period: 11.86
+        },
+        {
+            name: "Saturn", mass: 40, radius: 3.0, color: 0xddcc99,
+            semiMajorAxis: 110, eccentricity: 0.056, period: 29.46
+        },
+        {
+            name: "Uranus", mass: 20, radius: 2.0, color: 0x00ffff,
+            semiMajorAxis: 140, eccentricity: 0.046, period: 84.01
+        },
+        {
+            name: "Neptune", mass: 20, radius: 2.0, color: 0x0000aa,
+            semiMajorAxis: 170, eccentricity: 0.010, period: 164.79
+        },
         // Dwarf Planets
-        { name: "Pluto", mass: 0.5, radius: 0.5, color: 0xdddddd, distance: 100 },
-        { name: "Eris", mass: 0.6, radius: 0.6, color: 0xffffff, distance: 120 }
+        {
+            name: "Pluto", mass: 0.5, radius: 0.5, color: 0xdddddd,
+            semiMajorAxis: 200, eccentricity: 0.248, period: 248.09
+        },
+        {
+            name: "Eris", mass: 0.6, radius: 0.6, color: 0xffffff,
+            semiMajorAxis: 360, eccentricity: 0.44, period: 557
+        }
     ];
 
     planets.forEach(p => {
-        const v = Math.sqrt((CONFIG.G * sun.mass) / p.distance);
-        // Randomize start angle
-        const angle = Math.random() * Math.PI * 2;
-        const x = Math.cos(angle) * p.distance;
-        const z = Math.sin(angle) * p.distance;
+        // At perihelion: r = a(1 - e)
+        const perihelionDist = p.semiMajorAxis * (1 - p.eccentricity);
 
-        // Velocity perpendicular to position
-        const vx = -Math.sin(angle) * v;
-        const vz = Math.cos(angle) * v;
+        // Position at perihelion (angle = 0, so x = r, z = 0)
+        const x = perihelionDist;
+        const z = 0;
+
+        // Velocity at perihelion using vis-viva equation
+        // v = sqrt(G * M * (2/r - 1/a))
+        // At perihelion: v = sqrt(G * M * (1 + e) / (a * (1 - e)))
+        const v = Math.sqrt((CONFIG.G * sun.mass * (1 + p.eccentricity)) / (p.semiMajorAxis * (1 - p.eccentricity)));
+
+        // At perihelion, velocity is purely tangential (perpendicular to radius)
+        // Since we're at angle=0 (x-axis), velocity is along z-axis
+        const vx = 0;
+        const vz = v; // Positive z direction for counterclockwise orbit
 
         const body = new Body(p.name, p.mass, p.radius, p.color, [x, 0, z], [vx, 0, vz]);
         state.bodies.push(body);
@@ -351,31 +431,46 @@ function initSolarSystem() {
         option.innerText = p.name;
         document.getElementById('camera-target').appendChild(option);
 
-        // Orbit Line (Visual)
-        const orbitGeo = new THREE.RingGeometry(p.distance - 0.05, p.distance + 0.05, 128);
-        const orbitMat = new THREE.MeshBasicMaterial({
+        // Create elliptical orbit visualization
+        // Ellipse parameters: semi-major axis a, semi-minor axis b = a * sqrt(1 - e^2)
+        const a = p.semiMajorAxis;
+        const b = a * Math.sqrt(1 - p.eccentricity * p.eccentricity);
+
+        // Ellipse is centered at origin but sun is at one focus
+        // Focus offset: c = a * e
+        const c = a * p.eccentricity;
+
+        // Create ellipse curve (centered at origin)
+        const curve = new THREE.EllipseCurve(
+            -c, 0,          // Center offset by focus distance (sun at focus)
+            a, b,           // Semi-major and semi-minor axes
+            0, 2 * Math.PI, // Start and end angle
+            false,          // Not clockwise
+            0               // Rotation
+        );
+
+        const points = curve.getPoints(128);
+        const orbitGeometry = new THREE.BufferGeometry().setFromPoints(points);
+        const orbitMaterial = new THREE.LineBasicMaterial({
             color: 0xffffff,
-            side: THREE.DoubleSide,
             transparent: true,
-            opacity: 0.1
+            opacity: 0.2
         });
-        const orbitMesh = new THREE.Mesh(orbitGeo, orbitMat);
-        orbitMesh.rotation.x = Math.PI / 2;
-        orbitMesh.visible = false; // Hidden by default
-        orbitMesh.userData = { isOrbitLine: true };
-        scene.add(orbitMesh);
+        const orbitLine = new THREE.Line(orbitGeometry, orbitMaterial);
+        orbitLine.rotation.x = Math.PI / 2; // Rotate to XZ plane
+        orbitLine.visible = false; // Hidden by default
+        orbitLine.userData = { isOrbitLine: true };
+        scene.add(orbitLine);
     });
 
-    // Moons (Simplified: Just Earth's Moon for now to test hierarchy/physics)
-    // Moon orbits Earth. v_moon = v_earth + v_rel
-    // v_rel = sqrt(G * M_earth / r_rel)
+    // Moons (Simplified: Just Earth's Moon)
     const earth = state.bodies.find(b => b.name === "Earth");
     if (earth) {
         const rRel = 2.5;
         const vRel = Math.sqrt((CONFIG.G * earth.mass) / rRel);
         const moon = new Body("Moon", 0.1, 0.4, 0x888888,
             [earth.position.x + rRel, 0, earth.position.z],
-            [earth.velocity.x, 0, earth.velocity.z + vRel] // Tangential velocity relative to Earth
+            [earth.velocity.x, 0, earth.velocity.z + vRel]
         );
         state.bodies.push(moon);
     }
@@ -786,6 +881,14 @@ function animate() {
 
     const dt = CONFIG.dt * state.timeScale;
     updatePhysics(dt);
+
+    // Update sun glow position to follow the sun
+    const sun = state.bodies.find(b => b.name === "Sun");
+    if (sun) {
+        sunGlow.position.copy(sun.position);
+        // Update point light position
+        pointLight.position.copy(sun.position);
+    }
 
     // Update camera (chase or pilot mode)
     if (state.pilotMode && state.spaceship) {
