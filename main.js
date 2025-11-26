@@ -37,11 +37,11 @@ camera.position.setZ(50);
 camera.position.setY(20);
 
 // --- Lighting ---
-// Balanced ambient light to show both lit and dark sides
-const ambientLight = new THREE.AmbientLight(0x444444, 0.4);
+// Very low ambient light for stark contrast between lit and dark sides
+const ambientLight = new THREE.AmbientLight(0x111111, 0.05);
 scene.add(ambientLight);
 
-const pointLight = new THREE.PointLight(0xffffff, 5, 1000); // Strong directional light from sun
+const pointLight = new THREE.PointLight(0xffffff, 150, 1000); // Extremely strong light for maximum contrast
 pointLight.position.set(0, 0, 0); // Sun is at center
 
 // Enable shadows for the sun's light
