@@ -665,7 +665,6 @@ document.getElementById('show-orbits').addEventListener('change', (e) => {
 
 
 // --- Camera & Interaction ---
-// --- Camera & Interaction ---
 function updateCamera() {
     if (state.cameraTarget && state.cameraTarget !== "Free" && state.cameraTarget !== "Sun") {
         const targetBody = state.bodies.find(b => b.name === state.cameraTarget);
@@ -973,20 +972,7 @@ pilotModeBtn.addEventListener('click', (e) => {
 });
 
 // --- Spawn Mode Toggle ---
-const spawnModeBtn = document.createElement('button');
-spawnModeBtn.innerText = "Spawn Body";
-spawnModeBtn.style.position = 'absolute';
-spawnModeBtn.style.top = '20px';
-spawnModeBtn.style.left = '220px'; // Next to Pilot Mode button
-spawnModeBtn.style.zIndex = '100';
-spawnModeBtn.style.padding = '10px 20px';
-spawnModeBtn.style.fontSize = '16px';
-spawnModeBtn.style.background = '#0088ff';
-spawnModeBtn.style.color = 'white';
-spawnModeBtn.style.border = 'none';
-spawnModeBtn.style.borderRadius = '5px';
-spawnModeBtn.style.cursor = 'pointer';
-document.body.appendChild(spawnModeBtn);
+const spawnModeBtn = document.getElementById('spawn-btn');
 
 spawnModeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -997,8 +983,8 @@ spawnModeBtn.addEventListener('click', (e) => {
         spawnModeBtn.style.background = "#ff4444";
         controls.enabled = false; // Disable camera controls
     } else {
-        spawnModeBtn.innerText = "Spawn Body";
-        spawnModeBtn.style.background = "#0088ff";
+        spawnModeBtn.innerText = "Spawn (Click & Drag)";
+        spawnModeBtn.style.background = ""; // Reset to default
         controls.enabled = true; // Enable camera controls
     }
 });
@@ -1200,22 +1186,105 @@ crosshairH.style.display = 'none';
 document.body.appendChild(crosshairH);
 
 function updateHUD() {
-    if (state.pilotMode && state.spaceship) {
-        hudDiv.style.display = 'block';
-        const speed = state.spaceship.velocity.length().toFixed(1);
-        const thrust = state.spaceship.currentThrust.toFixed(1);
-        const maxThrust = state.spaceship.maxThrust.toFixed(1);
+    if (!state.pilotMode || !state.spaceship) {
+        // Hide pilot HUD when not in pilot mode
+        const pilotHud = document.getElementById('pilot-hud');
+        if (pilotHud) pilotHud.style.display = 'none';
 
-        // Convert speed to fraction of light speed
-        const speedOfLight = 638;
-        const speedC = (state.spaceship.velocity.length() / speedOfLight).toFixed(5);
+        // Hide relativistic effects
+        const vignette = document.getElementById('speed-vignette');
+        const blueShift = document.getElementById('blue-shift');
+        const motionBlur = document.getElementById('motion-blur');
+        if (vignette) vignette.style.display = 'none';
+        if (blueShift) blueShift.style.display = 'none';
+        if (motionBlur) motionBlur.style.display = 'none';
 
-        hudDiv.innerHTML = `
-            THRUST: ${thrust} / ${maxThrust}<br>
-            SPEED: ${speedC} c
-        `;
-    } else {
-        hudDiv.style.display = 'none';
+        // Hide star streaks
+        if (starStreaks) starStreaks.visible = false;
+        return;
+    }
+
+    // Show pilot HUD
+    const pilotHud = document.getElementById('pilot-hud');
+    if (pilotHud) pilotHud.style.display = 'block';
+
+    // Update Thrust Bar
+    const thrustBar = document.getElementById('thrust-bar');
+    const thrustVal = document.getElementById('thrust-val');
+
+    if (thrustBar && thrustVal) {
+        const percent = (state.spaceship.currentThrust / state.spaceship.maxThrust) * 100;
+
+        // Handle reverse thrust visualization
+        if (percent < 0) {
+            thrustBar.style.width = `${Math.abs(percent)}%`;
+            thrustBar.style.background = 'linear-gradient(90deg, #f00, #900)'; // Red for reverse
+        } else {
+            thrustBar.style.width = `${percent}%`;
+            thrustBar.style.background = 'linear-gradient(90deg, #0f0, #0a0)'; // Green for forward
+        }
+
+        thrustVal.innerText = state.spaceship.currentThrust.toFixed(1);
+    }
+
+    // Update Speed Display
+    const speedDisplay = document.getElementById('speed-display');
+    if (speedDisplay) {
+        // Display speed in 'c' (speed of light)
+        const speedOfLight = 638; // Simulation's c in units/tick
+        const speedC = state.spaceship.velocity.length() / speedOfLight;
+        speedDisplay.innerText = `${speedC.toFixed(5)} c`;
+
+        // Update relativistic visual effects based on speed
+        const vignette = document.getElementById('speed-vignette');
+        const blueShift = document.getElementById('blue-shift');
+        const motionBlur = document.getElementById('motion-blur');
+
+        // Show overlays when in pilot mode
+        if (vignette && blueShift && motionBlur) {
+            vignette.style.display = 'block';
+            blueShift.style.display = 'block';
+            motionBlur.style.display = 'block';
+
+            // Vignette: starts at 0.5c, max at 0.99c
+            const vignetteOpacity = Math.max(0, Math.min(1, (speedC - 0.5) / 0.5)) * 0.8;
+            vignette.style.opacity = vignetteOpacity.toString();
+
+            // Blue Shift: starts at 0.7c, max at 0.99c
+            const blueShiftOpacity = Math.max(0, Math.min(1, (speedC - 0.7) / 0.3)) * 0.3;
+            blueShift.style.opacity = blueShiftOpacity.toString();
+
+            // Motion Blur: starts at 0.6c with CSS blur filter
+            const blurAmount = Math.max(0, (speedC - 0.6) * 10);
+            const motionBlurOpacity = Math.max(0, Math.min(1, (speedC - 0.6) / 0.4)) * 0.5;
+            motionBlur.style.opacity = motionBlurOpacity.toString();
+            motionBlur.style.filter = `blur(${blurAmount}px)`;
+        }
+
+        // Update star streaks based on velocity
+        if (starStreaks && speedC > 0.3) {
+            starStreaks.visible = true;
+            const velocityNorm = state.spaceship.velocity.clone().normalize();
+            const streakLength = Math.max(0, (speedC - 0.3) * 100000); // Streak length increases with speed
+
+            const positions = starStreaks.geometry.attributes.position.array;
+            for (let i = 0; i < starPositions.length; i++) {
+                const star = starPositions[i];
+                // Start point = star position
+                positions[i * 6 + 0] = star.x;
+                positions[i * 6 + 1] = star.y;
+                positions[i * 6 + 2] = star.z;
+
+                // End point = star position + velocity direction * streakLength
+                positions[i * 6 + 3] = star.x + velocityNorm.x * streakLength;
+                positions[i * 6 + 4] = star.y + velocityNorm.y * streakLength;
+                positions[i * 6 + 5] = star.z + velocityNorm.z * streakLength;
+            }
+            starStreaks.geometry.attributes.position.needsUpdate = true;
+            starStreaks.material.opacity = Math.min(1, speedC * 0.8);
+        } else if (starStreaks) {
+            starStreaks.visible = false;
+        }
     }
 }
 
