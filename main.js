@@ -29,6 +29,89 @@ const state = {
     keys: { w: false, s: false }
 };
 
+// --- Music Manager ---
+class MusicManager {
+    constructor() {
+        this.audio = new Audio();
+        this.simulatorTracks = [];
+        this.pilotTracks = [];
+        this.currentMode = 'simulator';
+        this.currentPlaylist = [];
+        this.currentIndex = 0;
+        this.audio.volume = 0.3;
+        this.isInitialized = false;
+
+        this.audio.addEventListener('ended', () => this.playNext());
+    }
+
+    async loadTracks() {
+        const simulatorFiles = await this.detectFiles('music/simulator/');
+        const pilotFiles = await this.detectFiles('music/pilot/');
+
+        this.simulatorTracks = simulatorFiles;
+        this.pilotTracks = pilotFiles;
+
+        console.log(`Loaded ${this.simulatorTracks.length} simulator tracks, ${this.pilotTracks.length} pilot tracks`);
+        this.isInitialized = true;
+    }
+
+    async detectFiles(folder) {
+        try {
+            const response = await fetch(`${folder}manifest.json`);
+            if (response.ok) {
+                const manifest = await response.json();
+                return manifest.files.map(f => `${folder}${f}`);
+            }
+        } catch (e) {
+            console.log(`No manifest found for ${folder}`);
+        }
+        return [];
+    }
+
+    shuffle(array) {
+        const shuffled = [...array];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+    }
+
+    switchMode(mode) {
+        if (!this.isInitialized || this.currentMode === mode) return;
+
+        this.currentMode = mode;
+        const tracks = mode === 'pilot' ? this.pilotTracks : this.simulatorTracks;
+
+        if (tracks.length === 0) {
+            this.pause();
+            return;
+        }
+
+        this.currentPlaylist = this.shuffle(tracks);
+        this.currentIndex = 0;
+        this.play();
+    }
+
+    play() {
+        if (this.currentPlaylist.length === 0) return;
+        this.audio.src = this.currentPlaylist[this.currentIndex];
+        this.audio.play().catch(e => console.log('Audio requires user interaction'));
+    }
+
+    playNext() {
+        this.currentIndex = (this.currentIndex + 1) % this.currentPlaylist.length;
+        if (this.currentIndex === 0) {
+            this.currentPlaylist = this.shuffle(this.currentPlaylist);
+        }
+        this.play();
+    }
+
+    pause() {
+        this.audio.pause();
+    }
+}
+
 // --- Scene Setup ---
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000000);
@@ -926,6 +1009,7 @@ pilotModeBtn.addEventListener('click', (e) => {
 
                 // Request pointer lock
                 renderer.domElement.requestPointerLock();
+                musicManager.switchMode('pilot');
 
                 // No longer waiting for ship placement
                 waitingForShipPlacement = false;
@@ -961,6 +1045,7 @@ pilotModeBtn.addEventListener('click', (e) => {
         // Exit pointer lock
         if (document.pointerLockElement === renderer.domElement) {
             document.exitPointerLock();
+            musicManager.switchMode('simulator');
         }
 
         // Reset camera
@@ -1288,6 +1373,17 @@ function updateHUD() {
     }
 }
 
+const musicManager = new MusicManager();
+musicManager.loadTracks();
+
+// Start music on first user interaction
+let musicStarted = false;
+document.addEventListener('click', () => {
+    if (!musicStarted && musicManager.isInitialized) {
+        musicManager.switchMode('simulator');
+        musicStarted = true;
+    }
+}, { once: true });
 
 // --- Initialization ---
 initSolarSystem();
