@@ -6,6 +6,10 @@ A 3D interactive solar system simulation with real-time N-body gravity physics, 
 
 Explore our solar system through two distinct visualization modes. Watch planets orbit the sun with accurate elliptical orbits, spawn new celestial bodies, or pilot your own spaceship through the cosmos.
 
+## Run Now
+
+**[Run Ancient Sunspot](https://diogocosta408.github.io/Ancient-Sunspot/)**
+
 ## Simulation Modes
 
 ### 🔮 Solar Compact
