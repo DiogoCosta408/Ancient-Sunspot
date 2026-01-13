@@ -670,7 +670,7 @@ function initSolarSystem() {
             // Clouds (New)
             const cloudGeo = new THREE.SphereGeometry(radius * 1.02, 32, 32); // Slightly larger than Earth
             const textureLoader = new THREE.TextureLoader();
-            const cloudTexture = textureLoader.load('textures/2k_earth_clouds.jpg');
+            const cloudTexture = textureLoader.load('../textures/2k_earth_clouds.jpg');
             const cloudMat = new THREE.MeshStandardMaterial({
                 map: cloudTexture,
                 transparent: true,
@@ -687,7 +687,7 @@ function initSolarSystem() {
         if (p.name === "Saturn") {
             const ringGeo = new THREE.RingGeometry(radius * 1.4, radius * 2.5, 64);
             const textureLoader = new THREE.TextureLoader();
-            const ringTexture = textureLoader.load('textures/2k_saturn_ring_alpha.png');
+            const ringTexture = textureLoader.load('../textures/2k_saturn_ring_alpha.png');
 
             // Adjust UVs for ring texture (planar mapping)
             const pos = ringGeo.attributes.position;
