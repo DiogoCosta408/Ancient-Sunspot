@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // --- Configuration ---
 const CONFIG = {
     G: 0.000015,
-    dt: 0.1, // Simulation speed (time step)
+    dt: 0.05, // Reduced from 0.1 to 0.05 (Half speed)
     softening: 0.1,
     shadowMapSize: 2048 // Shadow map size
 };
@@ -24,9 +24,93 @@ const state = {
     isDragging: false,
     timeScale: 1.0,
     pilotMode: false,
+    spawnMode: false,
     spaceship: null,
     keys: { w: false, s: false }
 };
+
+// --- Music Manager ---
+class MusicManager {
+    constructor() {
+        this.audio = new Audio();
+        this.simulatorTracks = [];
+        this.pilotTracks = [];
+        this.currentMode = 'simulator';
+        this.currentPlaylist = [];
+        this.currentIndex = 0;
+        this.audio.volume = 0.3;
+        this.isInitialized = false;
+
+        this.audio.addEventListener('ended', () => this.playNext());
+    }
+
+    async loadTracks() {
+        const simulatorFiles = await this.detectFiles('../music/simulator/');
+        const pilotFiles = await this.detectFiles('../music/pilot/');
+
+        this.simulatorTracks = simulatorFiles;
+        this.pilotTracks = pilotFiles;
+
+        console.log(`Loaded ${this.simulatorTracks.length} simulator tracks, ${this.pilotTracks.length} pilot tracks`);
+        this.isInitialized = true;
+    }
+
+    async detectFiles(folder) {
+        try {
+            const response = await fetch(`${folder}manifest.json`);
+            if (response.ok) {
+                const manifest = await response.json();
+                return manifest.files.map(f => `${folder}${f}`);
+            }
+        } catch (e) {
+            console.log(`No manifest found for ${folder}`);
+        }
+        return [];
+    }
+
+    shuffle(array) {
+        const shuffled = [...array];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+    }
+
+    switchMode(mode) {
+        if (!this.isInitialized || this.currentMode === mode) return;
+
+        this.currentMode = mode;
+        const tracks = mode === 'pilot' ? this.pilotTracks : this.simulatorTracks;
+
+        if (tracks.length === 0) {
+            this.pause();
+            return;
+        }
+
+        this.currentPlaylist = this.shuffle(tracks);
+        this.currentIndex = 0;
+        this.play();
+    }
+
+    play() {
+        if (this.currentPlaylist.length === 0) return;
+        this.audio.src = this.currentPlaylist[this.currentIndex];
+        this.audio.play().catch(e => console.log('Audio requires user interaction'));
+    }
+
+    playNext() {
+        this.currentIndex = (this.currentIndex + 1) % this.currentPlaylist.length;
+        if (this.currentIndex === 0) {
+            this.currentPlaylist = this.shuffle(this.currentPlaylist);
+        }
+        this.play();
+    }
+
+    pause() {
+        this.audio.pause();
+    }
+}
 
 // --- Scene Setup ---
 const scene = new THREE.Scene();
@@ -72,7 +156,7 @@ controls.dampingFactor = 0.05;
 
 // --- Physics Engine ---
 class Body {
-    constructor(name, mass, radius, color, position, velocity, isStar = false, texturePath = null) {
+    constructor(name, mass, radius, color, position, velocity, isStar = false, texturePath = null, rotationPeriod = 0) {
         this.name = name;
         this.mass = mass;
         this.radius = radius;
@@ -81,21 +165,33 @@ class Body {
         this.isStar = isStar;
         this.force = new THREE.Vector3();
 
+        // Calculate rotation speed
+        // Base speed for Earth (period = 1) to rotate in 30s at dt=0.05 (60fps)
+        // Speed = 0.07 rad/sim_unit
+        const BASE_ROTATION_SPEED = 0.035; // Halved from 0.07
+        this.rotationSpeed = rotationPeriod !== 0 ? BASE_ROTATION_SPEED / rotationPeriod : 0;
+
         // Mesh
         const geometry = new THREE.SphereGeometry(radius, 32, 32);
         let material;
 
         if (isStar) {
-            material = new THREE.MeshBasicMaterial({ color: color }); // Star glows (basic material)
+            const materialParams = { color: color };
+            if (texturePath) {
+                const textureLoader = new THREE.TextureLoader();
+                textureLoader.crossOrigin = 'anonymous';
+                const texture = textureLoader.load(texturePath);
+                materialParams.map = texture;
+                materialParams.color = 0xffffff; // White so texture shows true colors
+            }
+            material = new THREE.MeshBasicMaterial(materialParams);
         } else {
             const materialParams = { color: color };
             if (texturePath) {
                 const textureLoader = new THREE.TextureLoader();
-                textureLoader.crossOrigin = 'anonymous'; // Fix CORS issues
-                // Load texture, but keep color as base/fallback
+                textureLoader.crossOrigin = 'anonymous';
                 const texture = textureLoader.load(texturePath);
                 materialParams.map = texture;
-                // If texture is provided, we might want to set color to white so it doesn't tint the texture
                 materialParams.color = 0xffffff;
             }
             material = new THREE.MeshStandardMaterial(materialParams);
@@ -297,6 +393,16 @@ function updatePhysics(dt) {
         // Update Mesh
         body.mesh.position.copy(body.position);
         body.updateTrail();
+
+        // Rotate planets (visual only)
+        if (!body.isStar && body !== state.spaceship) {
+            body.mesh.rotation.y += body.rotationSpeed * dt;
+
+            // Rotate clouds if Earth
+            if (body.name === "Earth" && body.cloudsMesh) {
+                body.cloudsMesh.rotation.y += body.rotationSpeed * dt * 1.1; // Clouds rotate slightly faster
+            }
+        }
     }
 }
 
@@ -349,9 +455,8 @@ const sunGlowGeometry = new THREE.SphereGeometry(450, 32, 32);
 
 // The material code remains the same...
 const sunGlowMaterial = new THREE.ShaderMaterial({
-    // ... keep existing uniforms and shaders ...
     uniforms: {
-        glowColor: { value: new THREE.Color(0xffff00) },
+        glowColor: { value: new THREE.Color(0xffaa00) }, // Orange-Gold for better blend
         viewVector: { value: camera.position }
     },
     vertexShader: `
@@ -360,7 +465,7 @@ const sunGlowMaterial = new THREE.ShaderMaterial({
         void main() {
             vec3 vNormal = normalize(normalMatrix * normal);
             vec3 vNormel = normalize(normalMatrix * viewVector);
-            intensity = pow(0.6 - dot(vNormal, vNormel), 4.0); // Adjusted coefficient 0.7 -> 0.6 for softer edge
+            intensity = pow(0.6 - dot(vNormal, vNormel), 4.0);
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
     `,
@@ -379,6 +484,34 @@ const sunGlowMaterial = new THREE.ShaderMaterial({
 const sunGlow = new THREE.Mesh(sunGlowGeometry, sunGlowMaterial);
 scene.add(sunGlow);
 
+// --- Keplerian Orbit Helper ---
+function calculateOrbitalState(a, e, M, centralMass) {
+    // 1. Solve Kepler's Equation: M = E - e * sin(E) for E (Eccentric Anomaly)
+    // Newton-Raphson iteration
+    let E = M;
+    for (let i = 0; i < 10; i++) {
+        const dE = (M - (E - e * Math.sin(E))) / (1 - e * Math.cos(E));
+        E += dE;
+        if (Math.abs(dE) < 1e-6) break;
+    }
+
+    // 2. Calculate Position in orbital plane (z is up in standard math, but we use y as up, so x, z plane)
+    // Using P (perihelion) along X axis
+    const x = a * (Math.cos(E) - e);
+    const z = a * Math.sqrt(1 - e * e) * Math.sin(E);
+
+    // 3. Calculate Velocity
+    // r is distance from focus
+    const r = a * (1 - e * Math.cos(E));
+    const mu = CONFIG.G * centralMass;
+    const vFactor = Math.sqrt(mu * a) / r;
+
+    const vx = -vFactor * Math.sin(E);
+    const vz = vFactor * Math.sqrt(1 - e * e) * Math.cos(E);
+
+    return { pos: { x, z }, vel: { x: vx, z: vz } };
+}
+
 // --- Solar System Data ---
 // Visual Scale: Distances and sizes are not 1:1 real scale, but proportional for visibility.
 // Mass is relative.
@@ -390,7 +523,10 @@ function initSolarSystem() {
     const sunRadiusVisual = 285;
     const sunMass = 6035500;
 
-    const sun = new Body("Sun", sunMass, sunRadiusVisual, 0xffff00, [0, 0, 0], [0, 0, 0], true);
+    const sun = new Body("Sun", sunMass, sunRadiusVisual, 0xffff00, [0, 0, 0], [0, 0, 0], true, "../textures/2k_sun.jpg", 27.0);
+    // Make Sun texture almost transparent as requested
+    sun.mesh.material.transparent = true;
+    sun.mesh.material.opacity = 0.1;
     state.bodies.push(sun);
 
     // 2. The Planets
@@ -403,7 +539,8 @@ function initSolarSystem() {
             radiusRel: 1.0,
             distRel: 1.0,
             eccentricity: 0.205,
-            texture: ""
+            texture: "../textures/2k_mercury.jpg",
+            rotationPeriod: 58.6
         },
         {
             name: "Venus", color: 0xffcc00,
@@ -411,7 +548,8 @@ function initSolarSystem() {
             radiusRel: 2.48,
             distRel: 1.86,
             eccentricity: 0.007,
-            texture: ""
+            texture: "../textures/2k_venus_surface.jpg",
+            rotationPeriod: -243
         },
         {
             name: "Earth", color: 0x0000ff,
@@ -419,7 +557,8 @@ function initSolarSystem() {
             radiusRel: 2.61,
             distRel: 2.58,
             eccentricity: 0.017,
-            texture: ""
+            texture: "../textures/2k_earth_daymap.jpg",
+            rotationPeriod: 1.0
         },
         {
             name: "Mars", color: 0xff0000,
@@ -427,7 +566,8 @@ function initSolarSystem() {
             radiusRel: 1.39,
             distRel: 3.94,
             eccentricity: 0.094,
-            texture: ""
+            texture: "../textures/2k_mars.jpg",
+            rotationPeriod: 1.03
         },
         {
             name: "Jupiter", color: 0xffaa00,
@@ -435,7 +575,8 @@ function initSolarSystem() {
             radiusRel: 28.66,
             distRel: 13.44,
             eccentricity: 0.049,
-            texture: ""
+            texture: "../textures/2k_jupiter.jpg",
+            rotationPeriod: 0.41
         },
         {
             name: "Saturn", color: 0xddcc99,
@@ -443,7 +584,8 @@ function initSolarSystem() {
             radiusRel: 23.87,
             distRel: 24.75,
             eccentricity: 0.057,
-            texture: ""
+            texture: "../textures/2k_saturn.jpg",
+            rotationPeriod: 0.45
         },
         {
             name: "Uranus", color: 0x00ffff,
@@ -451,7 +593,8 @@ function initSolarSystem() {
             radiusRel: 10.40,
             distRel: 49.60,
             eccentricity: 0.046,
-            texture: ""
+            texture: "../textures/2k_uranus.jpg",
+            rotationPeriod: -0.72
         },
         {
             name: "Neptune", color: 0x0000aa,
@@ -459,7 +602,8 @@ function initSolarSystem() {
             radiusRel: 10.09,
             distRel: 77.62,
             eccentricity: 0.011,
-            texture: ""
+            texture: "../textures/2k_neptune.jpg",
+            rotationPeriod: 0.67
         },
         {
             name: "Pluto", color: 0xdddddd,
@@ -467,7 +611,8 @@ function initSolarSystem() {
             radiusRel: 0.49,
             distRel: 101.5,
             eccentricity: 0.244,
-            texture: ""
+            texture: "", // No texture for Pluto provided
+            rotationPeriod: 6.39
         }
     ];
 
@@ -477,41 +622,88 @@ function initSolarSystem() {
         const radius = p.radiusRel * SCALES.RADIUS;
         const semiMajorAxis = p.distRel * SCALES.DISTANCE * SUN_VISUAL_SCALE;
 
-        // Calculate Position at Perihelion (Closest approach)
-        // r = a(1-e)
-        const distPerihelion = semiMajorAxis * (1 - p.eccentricity);
+        // Calculate Orbital State using Kepler's Equation for random starting position
+        const meanAnomaly = Math.random() * Math.PI * 2; // Random start angle
+        const { pos, vel } = calculateOrbitalState(semiMajorAxis, p.eccentricity, meanAnomaly, sunMass);
 
-        // Position: Start on X axis
-        const x = distPerihelion;
-        const z = 0;
-
-        // Calculate Orbital Velocity (Vis-Viva Equation) at Perihelion
-        // v = sqrt( G * M_sun * ( (1+e) / (a*(1-e)) ) )
-        // Note: We use the actual physics mass of Sun here
-        const num = CONFIG.G * sunMass * (1 + p.eccentricity);
-        const den = semiMajorAxis * (1 - p.eccentricity);
-        const v = Math.sqrt(num / den);
-
-        // At perihelion, velocity is purely perpendicular to radius
-        const vx = 0;
-        const vz = v; // Orbit counter-clockwise
-
-        const body = new Body(p.name, mass, radius, p.color, [x, 0, z], [vx, 0, vz], false, p.texture);
+        const body = new Body(p.name, mass, radius, p.color, [pos.x, 0, pos.z], [vel.x, 0, vel.z], false, p.texture, p.rotationPeriod);
         state.bodies.push(body);
 
         // --- Visual Extras (Rings, Atmosphere) ---
 
-        // Earth Atmosphere
+        // Earth Atmosphere & Clouds
         if (p.name === "Earth") {
+            // Atmosphere (Shader-based Glow)
             const atmoGeo = new THREE.SphereGeometry(radius * 1.2, 32, 32);
-            const atmoMat = new THREE.MeshBasicMaterial({ color: 0x00aaff, transparent: true, opacity: 0.2, side: THREE.BackSide });
+            const atmoMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    glowColor: { value: new THREE.Color(0x00aaff) },
+                    viewVector: { value: camera.position }
+                },
+                vertexShader: `
+                    varying vec3 vNormal;
+                    varying vec3 vViewPosition;
+                    void main() {
+                        vNormal = normalize(normalMatrix * normal);
+                        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                        vViewPosition = -mvPosition.xyz;
+                        gl_Position = projectionMatrix * mvPosition;
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 glowColor;
+                    varying vec3 vNormal;
+                    varying vec3 vViewPosition;
+                    void main() {
+                        vec3 normal = normalize(vNormal);
+                        vec3 viewDir = normalize(vViewPosition);
+                        float intensity = pow(0.6 - dot(normal, viewDir), 4.0);
+                        gl_FragColor = vec4(glowColor, 1.0) * intensity;
+                    }
+                `,
+                side: THREE.FrontSide, // FrontSide for halo effect
+                blending: THREE.AdditiveBlending,
+                transparent: true
+            });
             body.mesh.add(new THREE.Mesh(atmoGeo, atmoMat));
+
+            // Clouds (New)
+            const cloudGeo = new THREE.SphereGeometry(radius * 1.02, 32, 32); // Slightly larger than Earth
+            const textureLoader = new THREE.TextureLoader();
+            const cloudTexture = textureLoader.load('textures/2k_earth_clouds.jpg');
+            const cloudMat = new THREE.MeshStandardMaterial({
+                map: cloudTexture,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending, // Assumes black background for clouds
+                side: THREE.DoubleSide
+            });
+            const cloudsMesh = new THREE.Mesh(cloudGeo, cloudMat);
+            body.mesh.add(cloudsMesh);
+            body.cloudsMesh = cloudsMesh; // Reference for rotation
         }
 
         // Saturn Rings (Scaled to new radius)
         if (p.name === "Saturn") {
             const ringGeo = new THREE.RingGeometry(radius * 1.4, radius * 2.5, 64);
-            const ringMat = new THREE.MeshBasicMaterial({ color: 0xaa8855, side: THREE.DoubleSide, transparent: true, opacity: 0.6 });
+            const textureLoader = new THREE.TextureLoader();
+            const ringTexture = textureLoader.load('textures/2k_saturn_ring_alpha.png');
+
+            // Adjust UVs for ring texture (planar mapping)
+            const pos = ringGeo.attributes.position;
+            const v3 = new THREE.Vector3();
+            for (let i = 0; i < pos.count; i++) {
+                v3.fromBufferAttribute(pos, i);
+                ringGeo.attributes.uv.setXY(i, v3.length() < (radius * 1.95) ? 0 : 1, 1);
+            }
+
+            const ringMat = new THREE.MeshBasicMaterial({
+                map: ringTexture,
+                color: 0xaa8855,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.8
+            });
             const ring = new THREE.Mesh(ringGeo, ringMat);
             ring.rotation.x = Math.PI / 2;
             body.mesh.add(ring);
@@ -555,7 +747,6 @@ document.getElementById('show-orbits').addEventListener('change', (e) => {
 
 
 
-// --- Camera & Interaction ---
 // --- Camera & Interaction ---
 function updateCamera() {
     if (state.cameraTarget && state.cameraTarget !== "Free" && state.cameraTarget !== "Sun") {
@@ -668,9 +859,9 @@ function updatePilotControls() {
 
     // Adjust thrust based on W/S keys
     if (state.keys.w) {
-        state.spaceship.currentThrust = Math.min(state.spaceship.currentThrust + 0.1, state.spaceship.maxThrust);
+        state.spaceship.currentThrust = Math.min(state.spaceship.currentThrust + 0.05, state.spaceship.maxThrust);
     } else if (state.keys.s) {
-        state.spaceship.currentThrust = Math.max(state.spaceship.currentThrust - 0.1, -state.spaceship.maxThrust * 0.5);
+        state.spaceship.currentThrust = Math.max(state.spaceship.currentThrust - 0.05, -state.spaceship.maxThrust * 0.5);
     } else {
         // Gradual deceleration when no keys pressed
         state.spaceship.currentThrust *= 0.95;
@@ -761,6 +952,7 @@ pilotModeBtn.addEventListener('click', (e) => {
         pilotModeBtn.innerText = "Click to Place Ship";
         pilotModeBtn.style.background = "#ff9900";
         pilotInstructions.style.display = "block";
+        waitingForShipPlacement = true; // Prevent body spawning while placing ship
 
         // Wait for user to click to place the ship
         const placeShip = (e) => {
@@ -780,7 +972,7 @@ pilotModeBtn.addEventListener('click', (e) => {
                 state.spaceship = new Spaceship(
                     "Spaceship",
                     1, // Small mass
-                    0.5, // Small radius
+                    0.005, // Tiny radius (100x smaller than Mercury)
                     0x00ff00, // Green color
                     [target.x, target.y, target.z],
                     [0, 0, 0], // Zero initial velocity
@@ -801,235 +993,305 @@ pilotModeBtn.addEventListener('click', (e) => {
 
                 state.bodies.push(state.spaceship);
 
-                // Lock pointer for mouse control
+                // Switch camera to pilot mode
+                // We don't change cameraTarget to "Spaceship" because we handle pilot camera manually in animate()
+                // But we can reset the dropdown
+                document.getElementById('camera-target').value = "Free";
+                state.cameraTarget = "Free";
+
+                pilotModeBtn.innerText = "Exit Pilot Mode";
+                pilotModeBtn.style.background = "#ff4444";
+                pilotInstructions.innerText = "WASD to Move | Mouse to Steer | ESC to unlock mouse";
+
+                // Show crosshair
+                crosshair.style.display = 'block';
+                crosshairH.style.display = 'block';
+
+                // Request pointer lock
                 renderer.domElement.requestPointerLock();
+                musicManager.switchMode('pilot');
 
-                // Disable orbit controls
-                controls.enabled = false;
+                // No longer waiting for ship placement
+                waitingForShipPlacement = false;
 
-                // Show HUD and Crosshair
-                document.getElementById('pilot-hud').style.display = 'block';
-                document.getElementById('crosshair').style.display = 'block';
-
-                // Hide spaceship visuals (first-person view)
-                state.spaceship.mesh.visible = false;
-                state.spaceship.trailLine.visible = false;
-
-                pilotModeBtn.innerText = "Exit Pilot Mode (ESC)";
-
-                // Remove listener after successful placement
+                // Remove this event listener
                 renderer.domElement.removeEventListener('click', placeShip);
             }
         };
 
-        // Add listener with delay to prevent immediate trigger
-        setTimeout(() => {
-            renderer.domElement.addEventListener('click', placeShip);
-        }, 50);
+        renderer.domElement.addEventListener('click', placeShip);
 
     } else {
         // Exit pilot mode
-        exitPilotMode();
+        state.pilotMode = false;
+        if (state.spaceship) {
+            // Remove spaceship
+            scene.remove(state.spaceship.mesh);
+            scene.remove(state.spaceship.trailLine);
+            scene.remove(state.spaceship.nameSprite);
+            state.bodies = state.bodies.filter(b => b !== state.spaceship);
+            state.spaceship = null;
+        }
+
+        pilotModeBtn.innerText = "Launch Pilot Mode";
+        pilotModeBtn.style.background = "#00cc00";
+        pilotInstructions.style.display = "none";
+        pilotInstructions.innerText = "Click anywhere to spawn ship";
+
+        // Hide crosshair
+        crosshair.style.display = 'none';
+        crosshairH.style.display = 'none';
+
+        // Exit pointer lock
+        if (document.pointerLockElement === renderer.domElement) {
+            document.exitPointerLock();
+            musicManager.switchMode('simulator');
+        }
+
+        // Reset camera
+        camera.position.set(-2000, 1000, -4000);
+        camera.lookAt(0, 0, 0);
+        controls.target.set(0, 0, 0);
+        controls.update();
     }
 });
 
-function exitPilotMode() {
-    state.pilotMode = false;
-    pilotModeBtn.innerText = "Launch Pilot Mode";
-    pilotModeBtn.style.background = "#4facfe";
-    pilotInstructions.style.display = "none";
+// --- Spawn Mode Toggle ---
+const spawnModeBtn = document.getElementById('spawn-btn');
 
-    // Hide HUD and Crosshair
-    document.getElementById('pilot-hud').style.display = 'none';
-    document.getElementById('crosshair').style.display = 'none';
+spawnModeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.spawnMode = !state.spawnMode;
 
-    // Exit pointer lock
-    document.exitPointerLock();
-
-    // Re-enable orbit controls
-    controls.enabled = true;
-
-    // Remove spaceship from simulation
-    if (state.spaceship) {
-        // Remove from bodies array
-        const index = state.bodies.indexOf(state.spaceship);
-        if (index > -1) {
-            state.bodies.splice(index, 1);
-        }
-
-        // Remove visual elements
-        scene.remove(state.spaceship.mesh);
-        scene.remove(state.spaceship.trailLine);
-        scene.remove(state.spaceship.nameSprite);
-
-        state.spaceship = null;
+    if (state.spawnMode) {
+        spawnModeBtn.innerText = "Exit Spawn Mode";
+        spawnModeBtn.style.background = "#ff4444";
+        controls.enabled = false; // Disable camera controls
+    } else {
+        spawnModeBtn.innerText = "Spawn (Click & Drag)";
+        spawnModeBtn.style.background = ""; // Reset to default
+        controls.enabled = true; // Enable camera controls
     }
+});
 
-    // Hide visual effects
-    const vignette = document.getElementById('speed-vignette');
-    const blueShift = document.getElementById('blue-shift');
-    const motionBlur = document.getElementById('motion-blur');
-    if (vignette) {
-        vignette.style.display = 'none';
-        vignette.style.opacity = '0';
-    }
-    if (blueShift) {
-        blueShift.style.display = 'none';
-        blueShift.style.opacity = '0';
-    }
-    if (motionBlur) {
-        motionBlur.style.display = 'none';
-        motionBlur.style.opacity = '0';
-    }
-
-    // Hide star streaks
-    if (starStreaks) {
-        starStreaks.visible = false;
-    }
-}
-
-// Keyboard Input for Thrust
+// Keyboard controls for spaceship
 window.addEventListener('keydown', (e) => {
-    if (!state.pilotMode || !state.spaceship) return;
-
-    if (e.key.toLowerCase() === 'w') {
-        state.keys.w = true;
-    } else if (e.key.toLowerCase() === 's') {
-        state.keys.s = true;
-    } else if (e.key === 'Escape') {
-        exitPilotMode();
-    }
+    if (e.key === 'w' || e.key === 'W') state.keys.w = true;
+    if (e.key === 's' || e.key === 'S') state.keys.s = true;
 });
 
 window.addEventListener('keyup', (e) => {
-    if (!state.pilotMode || !state.spaceship) return;
+    if (e.key === 'w' || e.key === 'W') state.keys.w = false;
+    if (e.key === 's' || e.key === 'S') state.keys.s = false;
+});
 
-    if (e.key.toLowerCase() === 'w') {
-        state.keys.w = false;
-    } else if (e.key.toLowerCase() === 's') {
-        state.keys.s = false;
+// ESC to exit pointer lock
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.pilotMode && document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock();
     }
 });
 
-// Mouse Movement for Steering
-renderer.domElement.addEventListener('mousemove', (e) => {
-    if (!state.pilotMode || !state.spaceship) return;
-    if (document.pointerLockElement !== renderer.domElement) return;
+// Mouse movement for steering
+window.addEventListener('mousemove', (e) => {
+    if (state.pilotMode && state.spaceship) {
+        const sensitivity = 0.002;
+        const deltaX = e.movementX * sensitivity;
+        const deltaY = e.movementY * sensitivity;
 
-    // Get mouse movement
-    const sensitivity = 0.002;
-    const deltaYaw = -e.movementX * sensitivity;
-    const deltaPitch = -e.movementY * sensitivity; // Normal (not inverted)
-
-    state.spaceship.rotate(deltaYaw, deltaPitch);
+        // Invert Y for natural flight controls (up = pitch up) -> Actually user requested NO inversion
+        // So up mouse = pitch up (negative rotation around X axis)
+        state.spaceship.rotate(-deltaX, -deltaY);
+    }
 });
 
-// Spawning Logic
-let spawnMode = false;
+// --- Body Spawner with Drag for Velocity ---
+let waitingForShipPlacement = false; // Track if we're waiting to place ship
+let spawnStartPos = null;
+let spawnStartScreen = null;
 let isDraggingSpawn = false;
-let spawnStartPos = new THREE.Vector3();
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-const spawnPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Ecliptic plane (y=0)
+let velocityArrow = null;
 
-// Visual helper for aiming
-const aimLineGeo = new THREE.BufferGeometry();
-const aimLineMat = new THREE.LineBasicMaterial({ color: 0x00ff00 });
-const aimLine = new THREE.Line(aimLineGeo, aimLineMat);
-scene.add(aimLine);
-aimLine.visible = false;
+renderer.domElement.addEventListener('mousedown', (e) => {
+    // Don't spawn if in pilot mode with spaceship already placed
+    if (state.pilotMode && state.spaceship) return;
+    // Don't spawn if waiting to place ship
+    if (waitingForShipPlacement) return;
+    if (e.button === 2) return; // Don't spawn on right-click
+    if (e.button !== 0) return; // Only left click
 
-const spawnBtn = document.getElementById('spawn-btn');
-spawnBtn.addEventListener('click', () => {
-    spawnMode = !spawnMode;
-    spawnBtn.innerText = spawnMode ? "Click on Space to Place" : "Spawn (Click & Drag)";
-    spawnBtn.style.background = spawnMode ? "#ff9900" : "#4facfe"; // Orange when active
-});
+    // Only spawn if in Spawn Mode
+    if (!state.spawnMode) return;
 
-// Mouse Events for Spawning
-window.addEventListener('pointerdown', (e) => {
-    if (!spawnMode) return;
-
-    // Calculate pointer position in normalized device coordinates
+    // Calculate spawn position on ecliptic plane
+    const pointer = new THREE.Vector2();
     pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
     pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
+    const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(pointer, camera);
+    const spawnPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const target = new THREE.Vector3();
 
-    // Raycast to the ecliptic plane
     if (raycaster.ray.intersectPlane(spawnPlane, target)) {
+        spawnStartPos = target.clone();
+        spawnStartScreen = { x: e.clientX, y: e.clientY };
         isDraggingSpawn = true;
-        spawnStartPos.copy(target);
-        controls.enabled = false; // Disable camera controls while dragging
 
-        // Show aim line
-        aimLine.visible = true;
-        const points = [spawnStartPos, spawnStartPos]; // Start with zero length
-        aimLine.geometry.setFromPoints(points);
+        // Camera controls are already disabled in Spawn Mode
+
+        // Create arrow helper for visualization
+        const dir = new THREE.Vector3(0, 0, 1);
+        const origin = target;
+        const length = 1;
+        const hex = 0x00ff00;
+        velocityArrow = new THREE.ArrowHelper(dir, origin, length, hex, 0.5, 0.3);
+        scene.add(velocityArrow);
     }
 });
 
-window.addEventListener('pointermove', (e) => {
-    if (!isDraggingSpawn) return;
+renderer.domElement.addEventListener('mousemove', (e) => {
+    if (!isDraggingSpawn || !spawnStartPos) return;
 
+    // Calculate current position
+    const pointer = new THREE.Vector2();
     pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
     pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
+    const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(pointer, camera);
-    const target = new THREE.Vector3();
+    const spawnPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const currentPos = new THREE.Vector3();
 
-    if (raycaster.ray.intersectPlane(spawnPlane, target)) {
-        // Draw line from start to current mouse pos (representing velocity)
-        const points = [spawnStartPos, target];
-        aimLine.geometry.setFromPoints(points);
+    if (raycaster.ray.intersectPlane(spawnPlane, currentPos)) {
+        // Update arrow
+        const direction = new THREE.Vector3().subVectors(currentPos, spawnStartPos);
+        const length = direction.length();
+        if (length > 0.1) {
+            direction.normalize();
+            velocityArrow.setDirection(direction);
+            velocityArrow.setLength(length, 0.5, 0.3);
+        }
     }
 });
 
-window.addEventListener('pointerup', (e) => {
-    if (!isDraggingSpawn) return;
+renderer.domElement.addEventListener('mouseup', (e) => {
+    if (!isDraggingSpawn || !spawnStartPos) return;
+    if (e.button !== 0) return;
 
+    // Calculate velocity from drag
+    const pointer = new THREE.Vector2();
+    pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+    pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(pointer, camera);
+    const spawnPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const endPos = new THREE.Vector3();
+
+    if (raycaster.ray.intersectPlane(spawnPlane, endPos)) {
+        // Calculate velocity (scale factor for reasonable speeds)
+        const velocityVector = new THREE.Vector3().subVectors(endPos, spawnStartPos);
+        const velocityScale = 0.1; // Adjust this to change how fast spawned bodies move
+        const vx = velocityVector.x * velocityScale;
+        const vz = velocityVector.z * velocityScale;
+
+        // Spawn the body
+        const mass = 10;
+        const radius = 2;
+        const color = Math.random() * 0xffffff;
+
+        const body = new Body(
+            `Body${state.bodies.length}`,
+            mass,
+            radius,
+            color,
+            [spawnStartPos.x, 0, spawnStartPos.z],
+            [vx, 0, vz],
+            false,
+            null,
+            1.0
+        );
+        state.bodies.push(body);
+        console.log('Spawned body with velocity:', vx, vz);
+    }
+
+    // Clean up
+    if (velocityArrow) {
+        scene.remove(velocityArrow);
+        velocityArrow = null;
+    }
     isDraggingSpawn = false;
-    spawnMode = false; // Reset mode
-    controls.enabled = true; // Re-enable controls
-    aimLine.visible = false;
-    spawnBtn.innerText = "Spawn (Click & Drag)";
-    spawnBtn.style.background = "#4facfe";
+    spawnStartPos = null;
+    spawnStartScreen = null;
 
-    // Calculate final position for velocity vector
-    pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
-    pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(pointer, camera);
-    const target = new THREE.Vector3();
-    raycaster.ray.intersectPlane(spawnPlane, target);
-
-    // Velocity is vector from start to end (drag direction)
-    const velocity = new THREE.Vector3().subVectors(target, spawnStartPos);
-
-    // Get user params
-    const mass = parseFloat(document.getElementById('spawn-mass').value) || 10;
-    const speedMult = parseFloat(document.getElementById('spawn-velocity').value) || 1;
-
-    velocity.multiplyScalar(speedMult * 0.1); // Scale down
-
-    // Create Body
-    const name = "Asteroid_" + Math.floor(Math.random() * 1000);
-    const radius = Math.cbrt(mass) * 0.5;
-    const color = Math.random() * 0xffffff;
-
-    const body = new Body(name, mass, radius, color, [spawnStartPos.x, spawnStartPos.y, spawnStartPos.z], [velocity.x, velocity.y, velocity.z]);
-    state.bodies.push(body);
-
-    // Add to Camera Target Dropdown
-    const option = document.createElement('option');
-    option.value = name;
-    option.innerText = name;
-    document.getElementById('camera-target').appendChild(option);
+    // Do NOT re-enable camera controls here, as we are in Spawn Mode
 });
 
-// Update HUD
+// --- HUD ---
+const hudDiv = document.createElement('div');
+hudDiv.id = 'hud';
+hudDiv.style.position = 'absolute';
+hudDiv.style.bottom = '20px';
+hudDiv.style.left = '50%';
+hudDiv.style.transform = 'translateX(-50%)';
+hudDiv.style.color = '#00ff00';
+hudDiv.style.fontFamily = 'monospace';
+hudDiv.style.fontSize = '24px';
+hudDiv.style.textAlign = 'center';
+hudDiv.style.pointerEvents = 'none';
+hudDiv.style.textShadow = '0 0 5px #00ff00';
+hudDiv.style.display = 'none'; // Hidden by default
+document.body.appendChild(hudDiv);
+
+// --- Crosshair ---
+const crosshair = document.createElement('div');
+crosshair.id = 'crosshair';
+crosshair.style.position = 'absolute';
+crosshair.style.top = '50%';
+crosshair.style.left = '50%';
+crosshair.style.width = '4px';
+crosshair.style.height = '20px';
+crosshair.style.backgroundColor = 'rgba(0, 255, 0, 0.7)';
+crosshair.style.transform = 'translate(-50%, -50%)';
+crosshair.style.pointerEvents = 'none';
+crosshair.style.display = 'none';
+document.body.appendChild(crosshair);
+
+const crosshairH = document.createElement('div');
+crosshairH.style.position = 'absolute';
+crosshairH.style.top = '50%';
+crosshairH.style.left = '50%';
+crosshairH.style.width = '20px';
+crosshairH.style.height = '4px';
+crosshairH.style.backgroundColor = 'rgba(0, 255, 0, 0.7)';
+crosshairH.style.transform = 'translate(-50%, -50%)';
+crosshairH.style.pointerEvents = 'none';
+crosshairH.style.display = 'none';
+document.body.appendChild(crosshairH);
+
 function updateHUD() {
-    if (!state.pilotMode || !state.spaceship) return;
+    if (!state.pilotMode || !state.spaceship) {
+        // Hide pilot HUD when not in pilot mode
+        const pilotHud = document.getElementById('pilot-hud');
+        if (pilotHud) pilotHud.style.display = 'none';
+
+        // Hide relativistic effects
+        const vignette = document.getElementById('speed-vignette');
+        const blueShift = document.getElementById('blue-shift');
+        const motionBlur = document.getElementById('motion-blur');
+        if (vignette) vignette.style.display = 'none';
+        if (blueShift) blueShift.style.display = 'none';
+        if (motionBlur) motionBlur.style.display = 'none';
+
+        // Hide star streaks
+        if (starStreaks) starStreaks.visible = false;
+        return;
+    }
+
+    // Show pilot HUD
+    const pilotHud = document.getElementById('pilot-hud');
+    if (pilotHud) pilotHud.style.display = 'block';
 
     // Update Thrust Bar
     const thrustBar = document.getElementById('thrust-bar');
@@ -1111,6 +1373,21 @@ function updateHUD() {
     }
 }
 
+const musicManager = new MusicManager();
+musicManager.loadTracks();
+
+// Start music on first user interaction
+let musicStarted = false;
+document.addEventListener('click', () => {
+    if (!musicStarted && musicManager.isInitialized) {
+        musicManager.switchMode('simulator');
+        musicStarted = true;
+    }
+}, { once: true });
+
+// --- Initialization ---
+initSolarSystem();
+
 // --- Animation Loop ---
 function animate() {
     requestAnimationFrame(animate);
@@ -1149,15 +1426,4 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-// Ensure DOM is ready
-window.addEventListener('load', () => {
-    console.log("Window loaded, initializing solar system...");
-    try {
-        initSolarSystem();
-        console.log("Solar system initialized.");
-    } catch (e) {
-        console.error("Error initializing solar system:", e);
-    }
-    animate();
-});
-
+animate();
