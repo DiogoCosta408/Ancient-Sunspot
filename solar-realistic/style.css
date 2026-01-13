@@ -93,3 +93,44 @@ input[type="range"] {
     font-size: 0.8rem;
     color: #4facfe;
 }
+
+#ui-container.collapsed #controls {
+    display: none;
+}
+
+#ui-container.collapsed {
+    padding: 5px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#ui-toggle-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    margin: 0;
+    font-size: 1.2rem;
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 101;
+}
+
+#ui-toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+#ui-container.collapsed #ui-toggle-btn {
+    position: static;
+}
