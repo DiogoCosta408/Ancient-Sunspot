@@ -18,6 +18,8 @@
 
 <body>
     <div id="ui-container">
+        <button id="ui-toggle-btn"
+            onclick="const container = document.getElementById('ui-container'); container.classList.toggle('collapsed'); this.innerText = container.classList.contains('collapsed') ? '☰' : '×';">×</button>
         <div id="controls">
             <h1>Control Panel</h1>
             <div class="control-group">
