@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Solar System Gravity Simulation</title>
+    <title>Control Panel</title>
     <link rel="stylesheet" href="style.css?v=2">
     <script type="importmap">
         {
@@ -21,7 +21,7 @@
         <button id="ui-toggle-btn"
             onclick="const container = document.getElementById('ui-container'); container.classList.toggle('collapsed'); this.innerText = container.classList.contains('collapsed') ? '☰' : '×';">×</button>
         <div id="controls">
-            <h1>Solar System Gravity</h1>
+            <h1>Control Panel</h1>
             <div class="control-group">
                 <label for="camera-target">Camera Target:</label>
                 <select id="camera-target">
@@ -68,6 +68,10 @@
             <div class="control-group">
                 <label>Options:</label>
                 <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="show-trails" style="width: auto;" checked>
+                    <label for="show-trails" style="margin: 0; cursor: pointer;">Show Trails</label>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
                     <input type="checkbox" id="show-orbits" style="width: auto;">
                     <label for="show-orbits" style="margin: 0; cursor: pointer;">Show Orbit Lines</label>
                 </div>
@@ -110,6 +114,19 @@
         <div
             style="position: absolute; top: 0; left: 9px; width: 2px; height: 20px; background: #0f0; box-shadow: 0 0 4px #0f0;">
         </div>
+    </div>
+
+    <!-- Relativistic Visual Effects -->
+    <div id="speed-vignette"
+        style="display: none; pointer-events: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, transparent 30%, rgba(0, 0, 0, 0.9) 100%); opacity: 0; transition: opacity 0.1s; z-index: 500;">
+    </div>
+
+    <div id="blue-shift"
+        style="display: none; pointer-events: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(100, 150, 255, 0.3); opacity: 0; transition: opacity 0.1s; z-index: 501;">
+    </div>
+
+    <div id="motion-blur"
+        style="display: none; pointer-events: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, transparent 40%, rgba(0, 0, 0, 0.5) 100%); opacity: 0; transition: opacity 0.1s, filter 0.1s; z-index: 502;">
     </div>
 
     <canvas id="bg"></canvas>
